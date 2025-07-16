@@ -1,0 +1,190 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>SolPong</title>
+  <style>
+    body { margin: 0; background: #000; color: #fff; font-family: Arial, sans-serif; text-align: center; position: relative; }
+    canvas { display: block; margin: 60px auto 10px auto; background: #000; }
+    .wallet-btn { position: absolute; top: 10px; right: 10px; }
+    .controls { margin: 10px auto; }
+    .controls button {
+      padding: 10px 20px; margin: 5px;
+      font-size: 16px; background: transparent;
+      color: #fff; border: 2px solid #fff;
+      border-radius: 5px; cursor: pointer;
+    }
+    #scoreboard { font-size: 24px; margin: 10px; }
+    #waitingScreen, #captcha {
+      display: none; position: absolute;
+      top: 40%; left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0,0,0,0.85);
+      padding: 20px; border: 2px solid #fff;
+      border-radius: 10px;
+    }
+    #waitingScreen button, #captcha button {
+      margin-top: 10px; padding: 8px 16px; cursor: pointer;
+    }
+    #captcha input { padding: 8px; font-size: 16px; width: 60px; text-align: center; }
+    #captchaTimer { margin-top: 5px; font-size: 18px; }
+  </style>
+</head>
+<body>
+  <h1>SolPong</h1>
+  <div class="wallet-btn">
+    <button onclick="connectWallet()">Connect Wallet</button>
+  </div>
+  <canvas id="pong" width="800" height="500"></canvas>
+  <div id="scoreboard">
+    <span id="playerScore">0</span> - <span id="botScore">0</span>
+  </div>
+  <div class="controls">
+    <button onclick="startStake(0.05)">Stake 0.05 SOL</button>
+    <button onclick="startStake(0.1)">Stake 0.1 SOL</button>
+    <button onclick="startStake(0.5)">Stake 0.5 SOL</button>
+  </div>
+  <div id="waitingScreen">
+    Waiting for opponent<span id="dots"></span><br>
+    <button onclick="cancelWaiting()">Cancel (1% fee)</button>
+  </div>
+  <div id="captcha">
+    <p>Solve: <span id="captchaQuestion"></span></p>
+    <input type="text" id="captchaInput" placeholder="?" />
+    <button onclick="submitCaptcha()">Submit</button>
+    <div id="captchaTimer">30</div>
+  </div>
+
+<script>
+  const canvas = document.getElementById('pong'), ctx = canvas.getContext('2d');
+  const paddleW=10, paddleH=100, ballR=8;
+  let up=false, down=false;
+  let playerScore=0, botScore=0;
+
+  let gameState='practice', stake=0;
+  let dotsInt, captchaInt, captchaAnswer, captchaTime;
+
+  const player = { x:0, y:0, dy:8 };
+  const bot    = { x:0, y:0, dy:4 };
+  const ball   = { x:0, y:0, dx:0, dy:0 };
+
+  function initPositions() {
+    // random side
+    if(Math.random()<0.5) { player.x=0; bot.x=canvas.width-paddleW; }
+    else { bot.x=0; player.x=canvas.width-paddleW; }
+    player.y=bot.y=(canvas.height-paddleH)/2;
+    resetBall();
+  }
+  function resetBall() {
+    ball.x=canvas.width/2; ball.y=canvas.height/2;
+    ball.dx=6*(Math.random()>0.5?1:-1);
+    ball.dy=3*(Math.random()>0.5?1:-1);
+  }
+  function draw() {
+    ctx.fillStyle='#000'; ctx.fillRect(0,0,canvas.width,canvas.height);
+    // net
+    ctx.fillStyle='#fff';
+    for(let y=0;y<canvas.height;y+=30) ctx.fillRect(canvas.width/2-1,y,2,15);
+    // paddles and ball
+    ctx.fillRect(player.x,player.y,paddleW,paddleH);
+    ctx.fillRect(bot.x,bot.y,paddleW,paddleH);
+    ctx.beginPath(); ctx.arc(ball.x,ball.y,ballR,0,2*Math.PI); ctx.fill();
+  }
+  function update() {
+    // movement only in practice or match
+    if(gameState==='practice'||gameState==='match') {
+      // player
+      if(up) player.y-=player.dy; if(down) player.y+=player.dy;
+      player.y=Math.max(0,Math.min(canvas.height-paddleH,player.y));
+      // ball bounce top/bottom
+      if(ball.y-ballR<0||ball.y+ballR>canvas.height) ball.dy*=-1;
+      // paddle collision
+      if(ball.x-ballR<player.x+paddleW && ball.y>player.y && ball.y<player.y+paddleH){
+        ball.dx*=-1; ball.x=player.x+paddleW+ballR;
+      }
+      if(ball.x+ballR>bot.x && ball.y>bot.y && ball.y<bot.y+paddleH){
+        ball.dx*=-1; ball.x=bot.x-ballR;
+      }
+      // move ball
+      ball.x+=ball.dx; ball.y+=ball.dy;
+      // scoring
+      if(gameState==='match'){
+        if(ball.x<0){ botScore++; updateScore(); resetBall(); checkWin(); }
+        if(ball.x>canvas.width){ playerScore++; updateScore(); resetBall(); checkWin(); }
+      } else {
+        if(ball.x<0||ball.x>canvas.width) resetBall();
+      }
+      // bot AI
+      if(bot.y+paddleH/2<ball.y) bot.y+=bot.dy; else bot.y-=bot.dy;
+      bot.y=Math.max(0,Math.min(canvas.height-paddleH,bot.y));
+    }
+  }
+  function loop(){ update(); draw(); requestAnimationFrame(loop); }
+  function updateScore(){
+    document.getElementById('playerScore').textContent=playerScore;
+    document.getElementById('botScore').textContent=botScore;
+  }
+  function checkWin(){
+    if((playerScore>=11||botScore>=11) && Math.abs(playerScore-botScore)>=2){
+      alert((playerScore>botScore?'You win!':'Opponent wins!'));
+      exitMatch();
+    }
+  }
+  function exitMatch(){
+    gameState='practice'; document.querySelector('.controls').style.display='block';
+    initPositions(); playerScore=0;botScore=0; updateScore();
+  }
+
+  // input
+  document.addEventListener('keydown',e=>{ if(e.key==='ArrowUp') up=true; if(e.key==='ArrowDown') down=true; });
+  document.addEventListener('keyup',e=>{ if(e.key==='ArrowUp') up=false; if(e.key==='ArrowDown') down=false; });
+
+  // practice init
+  initPositions(); loop();
+
+  // UI functions
+  function connectWallet(){ alert('Wallet connect placeholder'); }
+  function startStake(amount){
+    stake=amount; gameState='waiting';
+    document.querySelector('.controls').style.display='none';
+    document.getElementById('waitingScreen').style.display='block';
+    let count=0, dots=document.getElementById('dots');
+    clearInterval(dotsInt);
+    dotsInt=setInterval(()=>{ dots.textContent='.'.repeat(count%4); count++; },500);
+    setTimeout(()=>{ clearInterval(dotsInt); document.getElementById('waitingScreen').style.display='none'; showCaptcha(); },3000);
+  }
+  function cancelWaiting(){
+    clearInterval(dotsInt);
+    document.getElementById('waitingScreen').style.display='none';
+    document.querySelector('.controls').style.display='block';
+    alert('1% fee deducted. Practice resumed.');
+    gameState='practice';
+  }
+  function showCaptcha(){
+    gameState='captcha'; captchaTime=30;
+    generateCaptcha(); document.getElementById('captcha').style.display='block';
+    clearInterval(captchaInt);
+    captchaInt=setInterval(()=>{
+      captchaTime--; document.getElementById('captchaTimer').textContent=captchaTime;
+      if(captchaTime<=0){ clearInterval(captchaInt);
+        alert('CAPTCHA failed. Stake forfeited.'); document.getElementById('captcha').style.display='none';
+        gameState='practice'; document.querySelector('.controls').style.display='block';
+      }
+    },1000);
+  }
+  function generateCaptcha(){
+    let a=Math.floor(Math.random()*10)+1, b=Math.floor(Math.random()*10)+1;
+    captchaAnswer=a+b; document.getElementById('captchaQuestion').textContent=`${a} + ${b}`;
+  }
+  function submitCaptcha(){
+    let val=parseInt(document.getElementById('captchaInput').value);
+    if(val===captchaAnswer){
+      clearInterval(captchaInt);
+      document.getElementById('captcha').style.display='none';
+      gameState='match'; playerScore=0;botScore=0; updateScore(); initPositions();
+    } else alert('Incorrect. Try again.');
+  }
+</script>
+</body>
+</html>
